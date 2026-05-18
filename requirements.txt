@@ -1,0 +1,8 @@
+opencv-python
+mediapipe==0.10.9
+pyautogui
+numpy<2
+protobuf<5
+SpeechRecognition
+pyaudio
+screeninfo

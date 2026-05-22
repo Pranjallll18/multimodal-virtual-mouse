@@ -160,8 +160,7 @@ class VoiceController:
 
                             try:
                                 # Try Google Speech Recognition
-                                # type: ignore
-                                command = self.recognizer.recognize_google(audio).lower()
+                                command = self.recognizer.recognize_google(audio).lower()  # type: ignore[attr-defined]
                                 print(f"Voice Command Recognized: '{command}'")
                                 self._process_command(command)
                             except sr.UnknownValueError:

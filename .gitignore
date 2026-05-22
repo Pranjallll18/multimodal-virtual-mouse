@@ -3,3 +3,6 @@ __pycache__/
 *$py.class
 .venv/
 tmpclaude-*
+calibration.json
+face_landmarker.task
+PyAudio-0.2.14-cp311-cp311-win_amd64.whl

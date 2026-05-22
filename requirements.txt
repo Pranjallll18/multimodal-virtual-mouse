@@ -1,8 +1,8 @@
 opencv-python
-mediapipe==0.10.35
+mediapipe
 pyautogui
-numpy>=2.1.0
-protobuf<5
+numpy
+protobuf
 SpeechRecognition
 pyaudio
 screeninfo

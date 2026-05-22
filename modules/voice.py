@@ -160,7 +160,7 @@ class VoiceController:
 
                             try:
                                 # Try Google Speech Recognition
-                                # pyrefly: ignore [missing-attribute]
+                                # type: ignore
                                 command = self.recognizer.recognize_google(audio).lower()
                                 print(f"Voice Command Recognized: '{command}'")
                                 self._process_command(command)

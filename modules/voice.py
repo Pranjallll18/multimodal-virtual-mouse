@@ -1,10 +1,58 @@
+from typing import TYPE_CHECKING, Any
+
 try:
     import speech_recognition as sr
     VOICE_AVAILABLE = True
 except (ImportError, OSError):
-    sr = None
     VOICE_AVAILABLE = False
     print("Warning: speech_recognition / pyaudio not available. Voice control disabled.")
+    
+    # Create fallback exception classes for when speech_recognition is not available
+    class UnknownValueError(Exception):
+        pass
+    
+    class RequestError(Exception):
+        pass
+    
+    class WaitTimeoutError(Exception):
+        pass
+    
+    class _MockAudioSource:
+        """Mock AudioSource for when speech_recognition is unavailable."""
+        pass
+    
+    class _MockRecognizer:
+        def adjust_for_ambient_noise(self, source: Any, duration: int = 1) -> None:
+            pass
+        
+        def listen(self, source: Any, timeout: float | None = None, phrase_time_limit: float | None = None) -> Any:
+            raise WaitTimeoutError()
+        
+        def recognize_google(self, audio: Any, language: str = "en-US", show_all: bool = False) -> str:
+            raise RequestError("speech_recognition not available")
+    
+    class _MockMicrophone:
+        def __init__(self, device_index: int | None = None):
+            self.device_index = device_index
+        
+        def __enter__(self) -> Any:
+            return _MockAudioSource()
+        
+        def __exit__(self, *args: Any) -> None:
+            pass
+        
+        @staticmethod
+        def list_microphone_names() -> list:
+            return []
+    
+    class _MockSR:
+        UnknownValueError = UnknownValueError
+        RequestError = RequestError
+        WaitTimeoutError = WaitTimeoutError
+        Recognizer = _MockRecognizer
+        Microphone = _MockMicrophone
+    
+    sr = _MockSR()
 
 import threading
 import pyautogui
@@ -101,7 +149,7 @@ class VoiceController:
 
         if not VOICE_AVAILABLE:
             print("Voice control disabled: pyaudio/speech_recognition not installed.")
-            self.recognizer = None
+            self.recognizer = sr.Recognizer()
             return
 
         self.recognizer = sr.Recognizer()
@@ -178,7 +226,7 @@ class VoiceController:
 
                             try:
                                 # Try Google Speech Recognition
-                                command = self.recognizer.recognize_google(audio).lower()
+                                command = self.recognizer.recognize_google(audio).lower()  # type: ignore
                                 print(f"Voice Command Recognized: '{command}'")
                                 
                                 # A. Check Evaluation Stage 2 (Dictation evaluation)

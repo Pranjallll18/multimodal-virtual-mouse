@@ -6,3 +6,4 @@ protobuf
 SpeechRecognition
 pyaudio
 screeninfo
+pyttsx3

@@ -179,15 +179,39 @@ class GazeTracker:
             offset_x = mapped_x * 0.5 * config.SENSITIVITY_X
             offset_y = mapped_y * 0.5 * config.SENSITIVITY_Y
 
-            screen_x = int(np.clip(
+                        # ... (keep your existing offset_x and offset_y calculation) ...
+
+            raw_screen_x = int(np.clip(
                 config.SCREEN_WIDTH  / 2 + offset_x * config.SCREEN_WIDTH,
                 0, config.SCREEN_WIDTH  - 1))
-            screen_y = int(np.clip(
+            raw_screen_y = int(np.clip(
                 config.SCREEN_HEIGHT / 2 + offset_y * config.SCREEN_HEIGHT,
                 0, config.SCREEN_HEIGHT - 1))
 
-            mapped_gaze  = (screen_x, screen_y)
-            current_gaze = utils.smooth_coords(mapped_gaze, self.prev_gaze, config.SMOOTHING_FACTOR)
+            # --- STABILIZATION LOGIC ---
+            
+            # Calculate pixel distance from the last known cursor position
+            dist = np.hypot(raw_screen_x - self.prev_gaze[0], raw_screen_y - self.prev_gaze[1])
+
+            # 1. Radial Deadzone (e.g., ignore movements under 8 pixels)
+            # You can extract '8' to config.DEADZONE_RADIUS
+            if dist < 8:  
+                current_gaze = self.prev_gaze
+            else:
+                # 2. Dynamic Smoothing (1 Euro Filter approximation)
+                # High distance = lower alpha (less smoothing, faster response)
+                # Low distance = higher alpha (more smoothing, higher precision)
+                base_smooth = getattr(config, 'SMOOTHING_FACTOR', 0.7)
+                
+                # Scale smoothing inversely with distance. Add 1e-5 to prevent division by zero.
+                dynamic_alpha = max(0.1, min(0.95, base_smooth * (20.0 / (dist + 1e-5))))
+                
+                # Apply the dynamic exponential moving average
+                smoothed_x = int(self.prev_gaze[0] * dynamic_alpha + raw_screen_x * (1.0 - dynamic_alpha))
+                smoothed_y = int(self.prev_gaze[1] * dynamic_alpha + raw_screen_y * (1.0 - dynamic_alpha))
+                
+                current_gaze = (smoothed_x, smoothed_y)
+
             self.prev_gaze = current_gaze
 
         return frame, current_gaze, results.multi_face_landmarks

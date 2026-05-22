@@ -1,12 +1,20 @@
 import sys
 import os
 
+# Fix Windows console encoding so emoji in print() don't crash
+if sys.stdout.encoding and sys.stdout.encoding.lower() != 'utf-8':
+    sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+if sys.stderr.encoding and sys.stderr.encoding.lower() != 'utf-8':
+    sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+
 # Add project root to sys.path to ensure modules can be imported
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 import cv2
 import config
+import time
 from modules import tracker, blink, voice, gui
+from modules.utils import speak
 
 def main():
     print("Initializing Multimodal Virtual Mouse...")
@@ -59,9 +67,54 @@ def main():
                 if blink_action == "left_click":
                     print(f"Action Triggered: {blink_action}")
                     pyautogui.click()
+                    
+                    config.METRICS_CLICKS_TOTAL += 1
+                    
+                    if config.EVAL_ACTIVE and config.EVAL_STAGE == 1:
+                        cursor_pos = pyautogui.position()
+                        target_pos = config.EVAL_TARGET_POS
+                        distance = ((cursor_pos[0] - target_pos[0])**2 + (cursor_pos[1] - target_pos[1])**2)**0.5
+                        print(f"Evaluation click distance: {distance:.1f}px")
+                        
+                        if distance <= 120.0:  # 120px hit range
+                            config.METRICS_CLICKS_SUCCESS += 1
+                            speak("Target clicked successfully!")
+                        else:
+                            speak("Missed the target.")
+                            
+                        # Update accuracy
+                        config.METRICS_CLICK_ACCURACY = (config.METRICS_CLICKS_SUCCESS / config.METRICS_CLICKS_TOTAL) * 100.0
+                        
+                        # Go to stage 2 (voice speech)
+                        config.EVAL_STAGE = 2
+                        config.EVAL_START_TIME = time.time()
+                        speak(f"Gaze accuracy recorded. Stage two. Speak the sentence: {config.EVAL_MESSAGE_TO_SPEAK}")
+                    else:
+                        speak("Left click")
+                        
                 elif blink_action == "right_click":
                     print(f"Action Triggered: {blink_action}")
                     pyautogui.click(button='right')
+                    
+                    config.METRICS_CLICKS_TOTAL += 1
+                    if config.EVAL_ACTIVE and config.EVAL_STAGE == 1:
+                        # Right click also triggers target check if done on target
+                        cursor_pos = pyautogui.position()
+                        target_pos = config.EVAL_TARGET_POS
+                        distance = ((cursor_pos[0] - target_pos[0])**2 + (cursor_pos[1] - target_pos[1])**2)**0.5
+                        
+                        if distance <= 120.0:
+                            config.METRICS_CLICKS_SUCCESS += 1
+                            speak("Target clicked successfully!")
+                        else:
+                            speak("Missed the target.")
+                            
+                        config.METRICS_CLICK_ACCURACY = (config.METRICS_CLICKS_SUCCESS / config.METRICS_CLICKS_TOTAL) * 100.0
+                        config.EVAL_STAGE = 2
+                        config.EVAL_START_TIME = time.time()
+                        speak(f"Gaze accuracy recorded. Stage two. Speak the sentence: {config.EVAL_MESSAGE_TO_SPEAK}")
+                    else:
+                        speak("Right click")
             except Exception as e:
                 print(f"Error in blink detection: {e}")
 

@@ -1,10 +1,19 @@
-import speech_recognition as sr
+try:
+    import speech_recognition as sr
+    VOICE_AVAILABLE = True
+except (ImportError, OSError):
+    sr = None
+    VOICE_AVAILABLE = False
+    print("Warning: speech_recognition / pyaudio not available. Voice control disabled.")
+
 import threading
 import pyautogui
 import subprocess
 import os
 import time
 import webbrowser
+import config
+from modules.utils import speak
 
 class VoiceController:
     """
@@ -83,10 +92,19 @@ class VoiceController:
     }
 
     def __init__(self):
-        self.recognizer = sr.Recognizer()
-        self.microphone = None
         self.is_listening = False
         self.thread = None
+        self.microphone = None
+        self.dictation_mode = False
+        self.dictation_words = 0
+        self.dictation_start_time = 0.0
+
+        if not VOICE_AVAILABLE:
+            print("Voice control disabled: pyaudio/speech_recognition not installed.")
+            self.recognizer = None
+            return
+
+        self.recognizer = sr.Recognizer()
 
         # Check if any microphone is available
         try:
@@ -160,10 +178,75 @@ class VoiceController:
 
                             try:
                                 # Try Google Speech Recognition
-                                # pyrefly: ignore [missing-attribute]
                                 command = self.recognizer.recognize_google(audio).lower()
                                 print(f"Voice Command Recognized: '{command}'")
-                                self._process_command(command)
+                                
+                                # A. Check Evaluation Stage 2 (Dictation evaluation)
+                                if config.EVAL_ACTIVE and config.EVAL_STAGE == 2:
+                                    elapsed = time.time() - config.EVAL_START_TIME
+                                    target_phrase = config.EVAL_MESSAGE_TO_SPEAK.lower().strip()
+                                    spoken_phrase = command.strip()
+                                    
+                                    # Simple word matching accuracy
+                                    target_words = target_phrase.split()
+                                    spoken_words = spoken_phrase.split()
+                                    
+                                    match_count = sum(1 for w in spoken_words if w in target_words)
+                                    accuracy = (match_count / max(1, len(target_words))) * 100
+                                    
+                                    # Word typing speed (WPM)
+                                    wpm = (len(spoken_words) / (elapsed / 60.0)) if elapsed > 0 else 0
+                                    
+                                    # Store metrics
+                                    config.METRICS_DICTATION_WORDS = len(spoken_words)
+                                    config.METRICS_DICTATION_SECONDS = elapsed
+                                    config.METRICS_DICTATION_WPM = wpm
+                                    
+                                    print(f"--- Evaluation Speech Results ---")
+                                    print(f"Target: {target_phrase}")
+                                    print(f"Spoken: {spoken_phrase}")
+                                    print(f"Accuracy: {accuracy:.1f}%")
+                                    print(f"Speed: {wpm:.1f} WPM")
+                                    
+                                    speak(f"Speech recognition completed. Typing speed is {int(wpm)} words per minute, with {int(accuracy)} percent accuracy.")
+                                    
+                                    # Complete evaluation stage
+                                    config.EVAL_TOTAL_TASKS += 1
+                                    if accuracy >= 75.0:
+                                        config.EVAL_TASK_COMPLETIONS += 1
+                                    
+                                    config.EVAL_ACTIVE = False
+                                    config.EVAL_STAGE = 0
+                                
+                                # B. Regular Dictation Mode
+                                elif self.dictation_mode:
+                                    if "stop typing" in command or "stop dictation" in command or "exit dictation" in command:
+                                        self.dictation_mode = False
+                                        elapsed = time.time() - self.dictation_start_time
+                                        wpm = (self.dictation_words / (elapsed / 60.0)) if elapsed > 0 else 0
+                                        
+                                        config.METRICS_DICTATION_WORDS = self.dictation_words
+                                        config.METRICS_DICTATION_SECONDS = elapsed
+                                        config.METRICS_DICTATION_WPM = wpm
+                                        
+                                        print(f"Dictation stopped. Words: {self.dictation_words}, WPM: {wpm:.1f}")
+                                        speak("Dictation stopped.")
+                                    else:
+                                        import pyautogui
+                                        pyautogui.write(command + " ", interval=0.01)
+                                        self.dictation_words += len(command.split())
+                                        print(f"Typed (Dictation): {command}")
+                                
+                                # C. Standard Voice Command Execution
+                                else:
+                                    if "start typing" in command or "start dictation" in command or "dictation mode" in command or "send message" in command or "send a message" in command:
+                                        self.dictation_mode = True
+                                        self.dictation_words = 0
+                                        self.dictation_start_time = time.time()
+                                        print("Dictation mode started. Speak your message...")
+                                        speak("Dictation started. Please speak your message.")
+                                    else:
+                                        self._process_command(command)
                             except sr.UnknownValueError:
                                 print("Could not understand audio. Please speak clearly.")
                             except sr.RequestError as e:
@@ -380,12 +463,14 @@ class VoiceController:
         app_name = command.replace("open", "", 1).strip()
         if not app_name:
             print("Please specify what to open. Example: 'open chrome'")
+            speak("Please specify what to open")
             return
 
         # Check website registry first (e.g., "open youtube")
         if app_name in self.WEBSITE_REGISTRY:
             url = self.WEBSITE_REGISTRY[app_name]
             print(f"🌐 Opening {app_name} → {url}")
+            speak(f"Opening website {app_name}")
             webbrowser.open(url)
             return
 
@@ -393,6 +478,7 @@ class VoiceController:
         if app_name in self.APP_REGISTRY:
             exe_path = self.APP_REGISTRY[app_name]
             print(f"🚀 Opening {app_name}...")
+            speak(f"Opening {app_name}")
             try:
                 # Handle Windows URI schemes (e.g., ms-settings:)
                 if exe_path.endswith(":"):
@@ -414,6 +500,7 @@ class VoiceController:
 
         # Fallback: use Windows Start Menu search
         print(f"🔍 '{app_name}' not in registry. Searching via Start Menu...")
+        speak(f"Searching for {app_name}")
         self._fallback_open(app_name)
 
     def _fallback_open(self, app_name):

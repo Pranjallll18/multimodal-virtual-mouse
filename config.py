@@ -14,17 +14,26 @@ BLINK_FRAMES = 3            # Number of consecutive frames for a valid blink
 CLICK_COOLDOWN = 1.0        # Seconds between clicks (Increased to prevent accidental multiple clicks)
 
 # Smoothing
-SMOOTHING_FACTOR = 0.8      # Base smoothing factor (0 = no smoothing, 1 = max smoothing/no movement)
+SMOOTHING_FACTOR = 0.92     # Higher = smoother but slightly slower response (0=raw, 1=frozen)
 
 # Sensitivity & Physiological Dev bounds
-EYE_MAX_DEV_X = 0.15           # Maximum expected horizontal pupil offset from center
-EYE_MAX_DEV_Y = 0.08           # Maximum expected vertical pupil offset ( eyelid restricted)
-SENSITIVITY_X = 1.3            # Horizontal sensitivity multiplier
-SENSITIVITY_Y = 1.6            # Vertical sensitivity multiplier (higher to make bottom reach effortless)
-VERTICAL_CENTER_OFFSET = 0.04  # Shift the "center" of vertical gaze downward
-                               # (iris naturally sits slightly above eye center, so cursor drifts up)
-HORIZONTAL_FLIP = True         # Flip horizontal axis to correct mirrored camera view
-VERTICAL_FLIP = False          # Set True if cursor Y is inverted (moves up when you look down)
+EYE_MAX_DEV_X = 0.12           # Horizontal max pupil deviation
+EYE_MAX_DEV_Y = 0.10           # Vertical max deviation — wider range for full vertical reach
+SENSITIVITY_X = 0.5            # Horizontal sensitivity multiplier (slowed down)
+SENSITIVITY_Y = 0.7            # Vertical sensitivity (slowed down)
+# VERTICAL_CENTER_OFFSET explains:
+#   center_y = 0.5 + VERTICAL_CENTER_OFFSET
+#   The iris in natural forward gaze sits at ratio_y ≈ 0.40 (upper part of eye opening)
+#   So to map forward gaze → screen center, center_y must ≈ 0.40 → offset = -0.10
+#   Look DOWN → ratio_y rises → norm_y positive → cursor moves DOWN (bottom of screen)
+#   Look UP   → ratio_y falls → norm_y negative → cursor moves UP   (top of screen)
+VERTICAL_CENTER_OFFSET = -0.10  # NEGATIVE: shifts center_y down to match natural iris position
+HORIZONTAL_FLIP = True          # Flip horizontal axis to correct mirrored camera view
+VERTICAL_FLIP = False           # Keep False: looking down increases ratio_y → cursor down
+
+# Deadzone & Speed Limits
+DEADZONE_RADIUS = 14           # Pixels — small jitter under this radius is ignored
+MAX_CURSOR_SPEED = 40          # Max pixels the cursor can jump per frame (clamps sudden jerks)
 
 # Screen Mapping
 SCREEN_WIDTH = 1920         # Default (will be updated)

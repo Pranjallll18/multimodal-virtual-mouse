@@ -124,46 +124,173 @@ class EvaluationWindow:
         self.top = tk.Toplevel(master)
         self.top.attributes('-fullscreen', True)
         self.top.configure(bg='#0f0f17')
-        
+
+        # Bind ESC to close at any time
+        self.top.bind('<Escape>', lambda e: self._exit_eval())
+
         # Select target dot position
-        self.target_x = random.randint(200, config.SCREEN_WIDTH - 200)
+        self.target_x = random.randint(250, config.SCREEN_WIDTH - 250)
         self.target_y = random.randint(200, config.SCREEN_HEIGHT - 200)
         config.EVAL_TARGET_POS = (self.target_x, self.target_y)
-        
+
         config.EVAL_ACTIVE = True
         config.EVAL_STAGE = 1
         self.start_time = time.time()
-        
-        self.label = tk.Label(self.top, text="Performance Evaluation Wizard", fg="#cdd6f4", bg="#0f0f17", font=("Outfit", 26, "bold"))
-        self.label.pack(pady=40)
-        
-        self.desc_label = tk.Label(self.top, text="Stage 1: Look at the Green Target and wink (blink) to left click it.", fg="#a6adc8", bg="#0f0f17", font=("Outfit", 18))
-        self.desc_label.pack(pady=10)
+        self.stage1_timeout = 15       # seconds before auto-advancing
+        self.proximity_radius = 80     # pixels — cursor within this = auto-hit
+        self.proximity_dwell = 1.0     # seconds cursor must stay near target
+        self.proximity_enter_time = None
+        self.stage1_done = False
 
-        self.canvas = tk.Canvas(self.top, width=config.SCREEN_WIDTH, height=config.SCREEN_HEIGHT, bg='#0f0f17', highlightthickness=0)
+        self.label = tk.Label(self.top, text="Performance Evaluation Wizard",
+                              fg="#cdd6f4", bg="#0f0f17", font=("Outfit", 26, "bold"))
+        self.label.pack(pady=20)
+
+        self.desc_label = tk.Label(
+            self.top,
+            text="Stage 1: Look at the Green Target — wink OR hold gaze near it for 1 sec.",
+            fg="#a6adc8", bg="#0f0f17", font=("Outfit", 16))
+        self.desc_label.pack(pady=5)
+
+        self.info_label = tk.Label(self.top, text="", fg="#f9e2af", bg="#0f0f17",
+                                   font=("Outfit", 14))
+        self.info_label.pack(pady=3)
+
+        # ESC hint
+        tk.Label(self.top, text="Press ESC to exit evaluation",
+                 fg="#585b70", bg="#0f0f17", font=("Outfit", 11)).pack(pady=2)
+
+        self.canvas = tk.Canvas(self.top, width=config.SCREEN_WIDTH,
+                                height=config.SCREEN_HEIGHT,
+                                bg='#0f0f17', highlightthickness=0)
         self.canvas.pack(fill=tk.BOTH, expand=True)
-        
-        r = 30
-        self.target_ring = self.canvas.create_oval(self.target_x-r, self.target_y-r, self.target_x+r, self.target_y+r, fill='#50fa7b', outline='#ffffff', width=4)
-        self.target_center = self.canvas.create_oval(self.target_x-6, self.target_y-6, self.target_x+6, self.target_y+6, fill='white')
-        
-        speak("Evaluation mode active. Stage one: Look at the green target and wink to left-click it.")
-        
+
+        # Draw green target dot
+        r = 35
+        self.target_ring = self.canvas.create_oval(
+            self.target_x-r, self.target_y-r,
+            self.target_x+r, self.target_y+r,
+            fill='#50fa7b', outline='#ffffff', width=4)
+        self.target_center = self.canvas.create_oval(
+            self.target_x-8, self.target_y-8,
+            self.target_x+8, self.target_y+8,
+            fill='white')
+        # Proximity ring (shows dwell progress)
+        self.prox_ring = self.canvas.create_oval(
+            self.target_x - self.proximity_radius,
+            self.target_y - self.proximity_radius,
+            self.target_x + self.proximity_radius,
+            self.target_y + self.proximity_radius,
+            outline='#a6e3a1', width=1, dash=(4, 4))
+
+        speak("Evaluation mode active. Stage one: Look at the green target."
+              " Wink to click it, or hold your gaze near it for one second.")
+
         self.check_loop()
+
+    def _exit_eval(self):
+        config.EVAL_ACTIVE = False
+        config.EVAL_STAGE = 0
+        self.top.destroy()
+
+    def _advance_to_stage2(self, hit=True):
+        """Move from Stage 1 (click) → Stage 2 (voice)."""
+        if self.stage1_done:
+            return
+        self.stage1_done = True
+        config.EVAL_STAGE = 2
+        config.EVAL_START_TIME = time.time()
+
+        if hit:
+            config.METRICS_CLICKS_SUCCESS += 1
+        config.METRICS_CLICKS_TOTAL += 1
+        if config.METRICS_CLICKS_TOTAL > 0:
+            config.METRICS_CLICK_ACCURACY = (
+                config.METRICS_CLICKS_SUCCESS / config.METRICS_CLICKS_TOTAL) * 100.0
+
+        result_text = "✅ Target Hit!" if hit else "⏱ Time Up — Moving to Stage 2"
+        speak(f"{'Target hit!' if hit else 'Time up.'} Stage two: speak the sentence: "
+              f"{config.EVAL_MESSAGE_TO_SPEAK}")
+
+        # Update UI for stage 2
+        try:
+            self.canvas.destroy()
+        except Exception:
+            pass
+        self.desc_label.config(
+            text=f"{result_text}\n\nStage 2: Speak the sentence below clearly:",
+            fg="#f9e2af", font=("Outfit", 18, "bold"))
+        self.info_label.config(
+            text=f'"{config.EVAL_MESSAGE_TO_SPEAK}"',
+            fg="#a6e3a1", font=("Outfit", 16, "italic"))
+        self.top.after(100, self.check_voice_loop)
 
     def check_loop(self):
         if not config.EVAL_ACTIVE:
             self.top.destroy()
             return
-            
-        if config.EVAL_STAGE == 2:
-            # Transition to Voice Phrase
-            if hasattr(self, 'canvas') and self.canvas:
-                self.canvas.destroy()
-            self.desc_label.config(text=f"Stage 2: Speak the sentence below clearly:\n\n\"{config.EVAL_MESSAGE_TO_SPEAK}\"", fg="#f9e2af", font=("Outfit", 22, "bold"))
-            self.top.after(100, self.check_voice_loop)
+
+        if self.stage1_done:
             return
-            
+
+        elapsed = time.time() - self.start_time
+        remaining = max(0, self.stage1_timeout - elapsed)
+
+        # --- Check if main.py already triggered a wink-click ---
+        if config.EVAL_STAGE == 2:
+            self._advance_to_stage2(hit=True)
+            return
+
+        # --- Timeout auto-advance ---
+        if elapsed >= self.stage1_timeout:
+            self._advance_to_stage2(hit=False)
+            return
+
+        # --- Proximity / dwell check using live cursor position ---
+        try:
+            import pyautogui
+            cx, cy = pyautogui.position()
+            dist = ((cx - self.target_x)**2 + (cy - self.target_y)**2) ** 0.5
+
+            if dist <= self.proximity_radius:
+                # Cursor is near the target
+                if self.proximity_enter_time is None:
+                    self.proximity_enter_time = time.time()
+
+                dwell_elapsed = time.time() - self.proximity_enter_time
+                dwell_remain = max(0.0, self.proximity_dwell - dwell_elapsed)
+
+                # Pulse the dot green → yellow as user dwells
+                progress = min(1.0, dwell_elapsed / self.proximity_dwell)
+                r_val = int(80 + 175 * progress)
+                g_val = int(250 - 100 * progress)
+                color = f"#{r_val:02x}{g_val:02x}7b"
+                try:
+                    self.canvas.itemconfig(self.target_ring, fill=color)
+                except Exception:
+                    pass
+
+                self.info_label.config(
+                    text=f"🎯 Hold still... {dwell_remain:.1f}s  |  ⏱ {remaining:.0f}s left",
+                    fg="#a6e3a1")
+
+                if dwell_elapsed >= self.proximity_dwell:
+                    # Dwell complete — auto-hit!
+                    self._advance_to_stage2(hit=True)
+                    return
+            else:
+                # Reset dwell if cursor left the zone
+                self.proximity_enter_time = None
+                try:
+                    self.canvas.itemconfig(self.target_ring, fill='#50fa7b')
+                except Exception:
+                    pass
+                self.info_label.config(
+                    text=f"📍 Distance: {dist:.0f}px  |  ⏱ Auto-advance in {remaining:.0f}s",
+                    fg="#f9e2af")
+        except Exception:
+            pass
+
         self.top.after(100, self.check_loop)
 
     def check_voice_loop(self):

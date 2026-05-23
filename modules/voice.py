@@ -287,7 +287,15 @@ class VoiceController:
                                 
                                 # C. Standard Voice Command Execution
                                 else:
-                                    if "start typing" in command or "start dictation" in command or "dictation mode" in command or "send message" in command or "send a message" in command:
+                                    # Dictation triggers — includes phonetically similar mishearings
+                                    # ("dictating" often heard as "detecting", "dictation" as "detection")
+                                    _DICTATION_TRIGGERS = [
+                                        "start typing", "start dictation", "start dictating",
+                                        "dictating", "dictation mode", "dictation",
+                                        "start detecting", "detecting mode", "start detection",
+                                        "send message", "send a message", "type message",
+                                    ]
+                                    if any(t in command for t in _DICTATION_TRIGGERS):
                                         self.dictation_mode = True
                                         self.dictation_words = 0
                                         self.dictation_start_time = time.time()

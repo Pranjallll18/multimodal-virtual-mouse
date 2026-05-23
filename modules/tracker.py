@@ -80,21 +80,45 @@ class GazeTracker:
 
         self.prev_gaze = (0, 0)
 
+        # EAR landmark indices for wink detection inside tracker
+        # (same as blink.py so we stay consistent)
+        self.LEFT_EYE_EAR_IDXS  = [362, 385, 387, 263, 373, 380]
+        self.RIGHT_EYE_EAR_IDXS = [33,  160, 158, 133, 153, 144]
+        self.EAR_WINK_THRESHOLD  = 0.20   # If one eye EAR < this it is considered winking
+
     def cleanup(self):
         """Release FaceLandmarker resources."""
         if hasattr(self, 'face_landmarker') and self.face_landmarker:
             self.face_landmarker.close()
 
-    def _get_iris_ratio(self, mesh_points):
-        """Calculate iris position as a ratio within the eye (0–1).
-        Head-movement independent because both iris and corners move together."""
-        ratios = []
-        for pupil, corner_a, corner_b, top, bottom in [
+    def _get_eye_ear(self, mesh_points, indices, h, w):
+        """Calculate Eye Aspect Ratio for one eye from pixel mesh_points."""
+        coords = [mesh_points[i] for i in indices]  # already pixel coords
+        p1, p2, p3, p4, p5, p6 = coords
+        v1 = np.linalg.norm(p2 - p6)
+        v2 = np.linalg.norm(p3 - p5)
+        hz = np.linalg.norm(p1 - p4)
+        return (v1 + v2) / (2.0 * hz) if hz > 0 else 0.3
+
+    def _get_iris_ratio(self, mesh_points,
+                        left_winking=False, right_winking=False):
+        """Calculate iris position ratio within the eye (0–1).
+        If one eye is winking, only the open eye is used to avoid
+        landmark distortion causing a cursor jump."""
+        results = []
+
+        eye_configs = [
+            # (pupil, outer_corner, inner_corner, top, bottom, is_winking)
             (self.LEFT_PUPIL,  self.LEFT_EYE_OUTER,  self.LEFT_EYE_INNER,
-             self.LEFT_EYE_TOP,    self.LEFT_EYE_BOTTOM),
+             self.LEFT_EYE_TOP,  self.LEFT_EYE_BOTTOM,  left_winking),
             (self.RIGHT_PUPIL, self.RIGHT_EYE_INNER, self.RIGHT_EYE_OUTER,
-             self.RIGHT_EYE_TOP,   self.RIGHT_EYE_BOTTOM),
-        ]:
+             self.RIGHT_EYE_TOP, self.RIGHT_EYE_BOTTOM, right_winking),
+        ]
+
+        for pupil, corner_a, corner_b, top, bottom, winking in eye_configs:
+            if winking:
+                continue   # skip distorted winking eye entirely
+
             iris = mesh_points[pupil]
             ca   = mesh_points[corner_a]
             cb   = mesh_points[corner_b]
@@ -111,10 +135,14 @@ class GazeTracker:
             eye_h   = bot_y - top_y
             ratio_y = (iris[1] - top_y) / eye_h if eye_h > 0 else 0.5
 
-            ratios.append((ratio_x, ratio_y))
+            results.append((ratio_x, ratio_y))
 
-        avg_x = (ratios[0][0] + ratios[1][0]) / 2.0
-        avg_y = (ratios[0][1] + ratios[1][1]) / 2.0
+        if not results:
+            # Both eyes winking (shouldn't happen) — hold last position
+            return None, None
+
+        avg_x = sum(r[0] for r in results) / len(results)
+        avg_y = sum(r[1] for r in results) / len(results)
         return avg_x, avg_y
 
     def process_frame(self, frame):
@@ -153,7 +181,24 @@ class GazeTracker:
             raw_x, raw_y = mesh_points[self.LEFT_PUPIL]
             config.CURRENT_RAW_IRIS = (raw_x, raw_y)
 
-            ratio_x, ratio_y = self._get_iris_ratio(mesh_points)
+            # --- Wink detection: compute EAR per eye ---
+            # If one eye is closed (winking), skip that eye's iris data entirely
+            # so the distorted landmark doesn't cause a cursor jump.
+            left_ear  = self._get_eye_ear(mesh_points, self.LEFT_EYE_EAR_IDXS,  h, w)
+            right_ear = self._get_eye_ear(mesh_points, self.RIGHT_EYE_EAR_IDXS, h, w)
+            left_winking  = left_ear  < self.EAR_WINK_THRESHOLD
+            right_winking = right_ear < self.EAR_WINK_THRESHOLD
+
+            ratio_x, ratio_y = self._get_iris_ratio(
+                mesh_points,
+                left_winking=left_winking,
+                right_winking=right_winking,
+            )
+
+            # If both eyes closed (natural blink) hold the last position
+            if ratio_x is None:
+                current_gaze = self.prev_gaze
+                return frame, current_gaze, results.multi_face_landmarks
 
             if config.HORIZONTAL_FLIP:
                 ratio_x = 1.0 - ratio_x
@@ -167,13 +212,13 @@ class GazeTracker:
             norm_x = np.clip((ratio_x - center_x) / config.EYE_MAX_DEV_X, -1.0, 1.0)
             norm_y = np.clip((ratio_y - center_y) / config.EYE_MAX_DEV_Y, -1.0, 1.0)
 
-            # Apply non-linear power-scaling (1.3 power).
-            # This dampens minor movements near the center (improving click precision)
-            # while progressively magnifying larger movements towards screen borders.
+            # Apply non-linear power-scaling (1.5 power = steeper dead-center suppression).
+            # Movements very close to center stay near-zero (great for click precision),
+            # while large eye movements are still mapped to screen edges.
             sgn_x = np.sign(norm_x)
             sgn_y = np.sign(norm_y)
-            mapped_x = sgn_x * (abs(norm_x) ** 1.3)
-            mapped_y = sgn_y * (abs(norm_y) ** 1.3)
+            mapped_x = sgn_x * (abs(norm_x) ** 1.5)
+            mapped_y = sgn_y * (abs(norm_y) ** 1.5)
 
             # Scale to screen borders with sensitivities
             offset_x = mapped_x * 0.5 * config.SENSITIVITY_X
@@ -189,27 +234,39 @@ class GazeTracker:
                 0, config.SCREEN_HEIGHT - 1))
 
             # --- STABILIZATION LOGIC ---
-            
+
+            deadzone  = getattr(config, 'DEADZONE_RADIUS', 12)
+            max_speed = getattr(config, 'MAX_CURSOR_SPEED', 60)
+
             # Calculate pixel distance from the last known cursor position
             dist = np.hypot(raw_screen_x - self.prev_gaze[0], raw_screen_y - self.prev_gaze[1])
 
-            # 1. Radial Deadzone (e.g., ignore movements under 8 pixels)
-            # You can extract '8' to config.DEADZONE_RADIUS
-            if dist < 8:  
+            # 1. Radial Deadzone — ignore tiny jitter movements
+            if dist < deadzone:
                 current_gaze = self.prev_gaze
             else:
-                # 2. Dynamic Smoothing (1 Euro Filter approximation)
-                # High distance = lower alpha (less smoothing, faster response)
-                # Low distance = higher alpha (more smoothing, higher precision)
-                base_smooth = getattr(config, 'SMOOTHING_FACTOR', 0.7)
-                
-                # Scale smoothing inversely with distance. Add 1e-5 to prevent division by zero.
-                dynamic_alpha = max(0.1, min(0.95, base_smooth * (20.0 / (dist + 1e-5))))
-                
-                # Apply the dynamic exponential moving average
-                smoothed_x = int(self.prev_gaze[0] * dynamic_alpha + raw_screen_x * (1.0 - dynamic_alpha))
-                smoothed_y = int(self.prev_gaze[1] * dynamic_alpha + raw_screen_y * (1.0 - dynamic_alpha))
-                
+                # 2. Dynamic Smoothing (1-Euro approximation)
+                # High distance = lower alpha (more responsive)
+                # Low distance  = higher alpha (more stable)
+                base_smooth  = getattr(config, 'SMOOTHING_FACTOR', 0.92)
+                dynamic_alpha = max(0.15, min(0.97,
+                    base_smooth * (30.0 / (dist + 1e-5))))
+
+                smoothed_x = int(self.prev_gaze[0] * dynamic_alpha
+                                 + raw_screen_x * (1.0 - dynamic_alpha))
+                smoothed_y = int(self.prev_gaze[1] * dynamic_alpha
+                                 + raw_screen_y * (1.0 - dynamic_alpha))
+
+                # 3. Per-frame speed clamp — prevents sudden large jumps
+                move_dist = np.hypot(smoothed_x - self.prev_gaze[0],
+                                     smoothed_y - self.prev_gaze[1])
+                if move_dist > max_speed:
+                    scale = max_speed / (move_dist + 1e-5)
+                    smoothed_x = int(self.prev_gaze[0]
+                                     + (smoothed_x - self.prev_gaze[0]) * scale)
+                    smoothed_y = int(self.prev_gaze[1]
+                                     + (smoothed_y - self.prev_gaze[1]) * scale)
+
                 current_gaze = (smoothed_x, smoothed_y)
 
             self.prev_gaze = current_gaze

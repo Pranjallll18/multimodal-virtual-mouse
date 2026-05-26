@@ -1,10 +1,12 @@
 import sys
 import os
 
+import io
+
 # Fix Windows console encoding so emoji in print() don't crash
-if sys.stdout.encoding and sys.stdout.encoding.lower() != 'utf-8':
+if isinstance(sys.stdout, io.TextIOWrapper) and sys.stdout.encoding.lower() != 'utf-8':
     sys.stdout.reconfigure(encoding='utf-8', errors='replace')
-if sys.stderr.encoding and sys.stderr.encoding.lower() != 'utf-8':
+if isinstance(sys.stderr, io.TextIOWrapper) and sys.stderr.encoding.lower() != 'utf-8':
     sys.stderr.reconfigure(encoding='utf-8', errors='replace')
 
 # Add project root to sys.path to ensure modules can be imported

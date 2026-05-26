@@ -2,6 +2,7 @@ __pycache__/
 *.py[cod]
 *$py.class
 .venv/
+venv/
 tmpclaude-*
 calibration.json
 face_landmarker.task

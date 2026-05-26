@@ -383,6 +383,11 @@ class VoiceController:
         elif command.startswith("press "):
             self._handle_press(command)
 
+        # ── Enter key ──
+        elif command in ("enter", "press enter", "hit enter", "submit", "confirm", "search"):
+            pyautogui.press('enter')
+            print("↵ Enter key pressed")
+
         # ── 7. Volume controls ──
         elif "volume up" in command or "increase volume" in command:
             pyautogui.press('volumeup', presses=5)

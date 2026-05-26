@@ -88,19 +88,19 @@ load_calibration()
 AUDIO_TTS_ENABLED = True
 
 # Performance Metrics (Evaluatable Mode)
-METRICS_CLICKS_TOTAL = 0
-METRICS_CLICKS_SUCCESS = 0
-METRICS_CLICK_ACCURACY = 0.0
-METRICS_DICTATION_WORDS = 0
-METRICS_DICTATION_SECONDS = 0.0
-METRICS_DICTATION_WPM = 0.0
+METRICS_CLICKS_TOTAL: int = 0
+METRICS_CLICKS_SUCCESS: int = 0
+METRICS_CLICK_ACCURACY: float = 0.0
+METRICS_DICTATION_WORDS: int = 0
+METRICS_DICTATION_SECONDS: float = 0.0
+METRICS_DICTATION_WPM: float = 0.0
 
 # Active evaluation variables
-EVAL_ACTIVE = False
-EVAL_STAGE = 0  # 0: Not started, 1: Click target, 2: Voice dictation phrase
-EVAL_START_TIME = 0.0
-EVAL_TARGET_POS = (0, 0)
-EVAL_MESSAGE_TO_SPEAK = "the quick brown fox jumps over the lazy dog"
-EVAL_TASK_COMPLETIONS = 0
-EVAL_TOTAL_TASKS = 0
+EVAL_ACTIVE: bool = False
+EVAL_STAGE: int = 0  # 0: Not started, 1: Click target, 2: Voice dictation phrase
+EVAL_START_TIME: float = 0.0
+EVAL_TARGET_POS: tuple[int, int] = (0, 0)
+EVAL_MESSAGE_TO_SPEAK: str = "the quick brown fox jumps over the lazy dog"
+EVAL_TASK_COMPLETIONS: int = 0
+EVAL_TOTAL_TASKS: int = 0
 

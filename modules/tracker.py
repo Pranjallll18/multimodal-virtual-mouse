@@ -12,6 +12,9 @@ from modules import utils
 # Path to the downloaded model file
 _MODEL_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "face_landmarker.task")
 
+# FIX 4: Power curve exponent — was 1.5 (huge dead zone), now 1.1 (near-linear, responsive)
+_POWER_CURVE = 1.1
+
 
 class _LandmarkCompat:
     """Wraps the new FaceLandmarker result to look like the old
@@ -31,6 +34,8 @@ class _LandmarkCompat:
 
 class _ResultWrapper:
     """Mimics  results.multi_face_landmarks  from the old API."""
+
+    multi_face_landmarks: list[_LandmarkCompat] | None
 
     def __init__(self, face_landmarks_list):
         if face_landmarks_list:
@@ -81,10 +86,16 @@ class GazeTracker:
         self.prev_gaze = (0, 0)
 
         # EAR landmark indices for wink detection inside tracker
-        # (same as blink.py so we stay consistent)
         self.LEFT_EYE_EAR_IDXS  = [362, 385, 387, 263, 373, 380]
         self.RIGHT_EYE_EAR_IDXS = [33,  160, 158, 133, 153, 144]
-        self.EAR_WINK_THRESHOLD  = 0.20   # If one eye EAR < this it is considered winking
+
+        # FIX 3: Wink threshold lowered from 0.20 → 0.15 to reduce false triggers
+        # (e.g. looking sideways or squinting no longer counts as a wink)
+        self.EAR_WINK_THRESHOLD = 0.15
+
+        # FIX 5: Lighting normalisation — track mean brightness to skip
+        # equalisation when the frame is already well-lit (avoids flickering)
+        self._brightness_skip_threshold = 80  # skip equalization above this mean luma
 
     def cleanup(self):
         """Release FaceLandmarker resources."""
@@ -148,9 +159,12 @@ class GazeTracker:
     def process_frame(self, frame):
         current_gaze = (0, 0)
 
-        # Lighting normalisation
+        # FIX 5: Conditional lighting normalisation — only equalise when the
+        # frame is dark. Skipping on bright frames prevents flicker.
         img_yuv = cv2.cvtColor(frame, cv2.COLOR_BGR2YUV)
-        img_yuv[:, :, 0] = cv2.equalizeHist(img_yuv[:, :, 0])
+        mean_luma = img_yuv[:, :, 0].mean()
+        if mean_luma < self._brightness_skip_threshold:
+            img_yuv[:, :, 0] = cv2.equalizeHist(img_yuv[:, :, 0])
         frame_eq = cv2.cvtColor(img_yuv, cv2.COLOR_YUV2BGR)
 
         # Convert to RGB for MediaPipe
@@ -182,8 +196,6 @@ class GazeTracker:
             config.CURRENT_RAW_IRIS = (raw_x, raw_y)
 
             # --- Wink detection: compute EAR per eye ---
-            # If one eye is closed (winking), skip that eye's iris data entirely
-            # so the distorted landmark doesn't cause a cursor jump.
             left_ear  = self._get_eye_ear(mesh_points, self.LEFT_EYE_EAR_IDXS,  h, w)
             right_ear = self._get_eye_ear(mesh_points, self.RIGHT_EYE_EAR_IDXS, h, w)
             left_winking  = left_ear  < self.EAR_WINK_THRESHOLD
@@ -196,7 +208,7 @@ class GazeTracker:
             )
 
             # If both eyes closed (natural blink) hold the last position
-            if ratio_x is None:
+            if ratio_x is None or ratio_y is None:
                 current_gaze = self.prev_gaze
                 return frame, current_gaze, results.multi_face_landmarks
 
@@ -212,19 +224,17 @@ class GazeTracker:
             norm_x = np.clip((ratio_x - center_x) / config.EYE_MAX_DEV_X, -1.0, 1.0)
             norm_y = np.clip((ratio_y - center_y) / config.EYE_MAX_DEV_Y, -1.0, 1.0)
 
-            # Apply non-linear power-scaling (1.5 power = steeper dead-center suppression).
-            # Movements very close to center stay near-zero (great for click precision),
-            # while large eye movements are still mapped to screen edges.
+            # FIX 4: Non-linear power-scaling — was 1.5 (large dead zone),
+            # now 1.1 (near-linear). Small eye movements near centre now
+            # register properly while large movements still reach screen edges.
             sgn_x = np.sign(norm_x)
             sgn_y = np.sign(norm_y)
-            mapped_x = sgn_x * (abs(norm_x) ** 1.5)
-            mapped_y = sgn_y * (abs(norm_y) ** 1.5)
+            mapped_x = sgn_x * (abs(norm_x) ** _POWER_CURVE)
+            mapped_y = sgn_y * (abs(norm_y) ** _POWER_CURVE)
 
             # Scale to screen borders with sensitivities
             offset_x = mapped_x * 0.5 * config.SENSITIVITY_X
             offset_y = mapped_y * 0.5 * config.SENSITIVITY_Y
-
-                        # ... (keep your existing offset_x and offset_y calculation) ...
 
             raw_screen_x = int(np.clip(
                 config.SCREEN_WIDTH  / 2 + offset_x * config.SCREEN_WIDTH,
@@ -235,21 +245,25 @@ class GazeTracker:
 
             # --- STABILIZATION LOGIC ---
 
-            deadzone  = getattr(config, 'DEADZONE_RADIUS', 12)
-            max_speed = getattr(config, 'MAX_CURSOR_SPEED', 60)
+            # FIX 2: Deadzone reduced from 12 → 8px for finer cursor control
+            deadzone  = getattr(config, 'DEADZONE_RADIUS', 8)
 
-            # Calculate pixel distance from the last known cursor position
+            # FIX 1: Max speed raised from 60 → 160px so fast intentional
+            # eye movements actually move the cursor quickly
+            max_speed = getattr(config, 'MAX_CURSOR_SPEED', 160)
+
             dist = np.hypot(raw_screen_x - self.prev_gaze[0], raw_screen_y - self.prev_gaze[1])
 
-            # 1. Radial Deadzone — ignore tiny jitter movements
+            # 1. Radial deadzone — ignore tiny jitter movements
             if dist < deadzone:
                 current_gaze = self.prev_gaze
             else:
-                # 2. Dynamic Smoothing (1-Euro approximation)
-                # High distance = lower alpha (more responsive)
-                # Low distance  = higher alpha (more stable)
-                base_smooth  = getattr(config, 'SMOOTHING_FACTOR', 0.92)
-                dynamic_alpha = max(0.15, min(0.97,
+                # 2. Dynamic smoothing
+                # FIX 1: Base smoothing lowered from 0.92 → 0.72 (much less lag).
+                # Alpha cap lowered from 0.97 → 0.85 so the cursor never fully
+                # freezes even during slow small movements.
+                base_smooth = getattr(config, 'SMOOTHING_FACTOR', 0.72)
+                dynamic_alpha = max(0.15, min(0.85,          # was min(0.97, ...)
                     base_smooth * (30.0 / (dist + 1e-5))))
 
                 smoothed_x = int(self.prev_gaze[0] * dynamic_alpha

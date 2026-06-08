@@ -19,8 +19,8 @@ SMOOTHING_FACTOR = 0.92     # Higher = smoother but slightly slower response (0=
 # Sensitivity & Physiological Dev bounds
 EYE_MAX_DEV_X = 0.12           # Horizontal max pupil deviation
 EYE_MAX_DEV_Y = 0.10           # Vertical max deviation — wider range for full vertical reach
-SENSITIVITY_X = 0.5            # Horizontal sensitivity multiplier (slowed down)
-SENSITIVITY_Y = 0.7            # Vertical sensitivity (slowed down)
+SENSITIVITY_X = 2.0            # Horizontal sensitivity multiplier (increased for full range)
+SENSITIVITY_Y = 2.0            # Vertical sensitivity (increased for full range)
 # VERTICAL_CENTER_OFFSET explains:
 #   center_y = 0.5 + VERTICAL_CENTER_OFFSET
 #   The iris in natural forward gaze sits at ratio_y ≈ 0.40 (upper part of eye opening)

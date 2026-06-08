@@ -191,10 +191,6 @@ class GazeTracker:
             cv2.circle(frame, tuple(mesh_points[self.LEFT_PUPIL]),  3, (0, 255, 0), -1)
             cv2.circle(frame, tuple(mesh_points[self.RIGHT_PUPIL]), 3, (0, 255, 0), -1)
 
-            # Store raw iris for calibration overlay
-            raw_x, raw_y = mesh_points[self.LEFT_PUPIL]
-            config.CURRENT_RAW_IRIS = (raw_x, raw_y)
-
             # --- Wink detection: compute EAR per eye ---
             left_ear  = self._get_eye_ear(mesh_points, self.LEFT_EYE_EAR_IDXS,  h, w)
             right_ear = self._get_eye_ear(mesh_points, self.RIGHT_EYE_EAR_IDXS, h, w)
@@ -217,12 +213,41 @@ class GazeTracker:
             if config.VERTICAL_FLIP:
                 ratio_y = 1.0 - ratio_y
 
-            center_x = 0.5
-            center_y = 0.5 + config.VERTICAL_CENTER_OFFSET
+            # Update CURRENT_RAW_IRIS to scaled ratios for calibration wizard compatibility
+            config.CURRENT_RAW_IRIS = (ratio_x * config.FRAME_WIDTH, ratio_y * config.FRAME_HEIGHT)
 
-            # Normalize raw offsets relative to physiological expected max range
-            norm_x = np.clip((ratio_x - center_x) / config.EYE_MAX_DEV_X, -1.0, 1.0)
-            norm_y = np.clip((ratio_y - center_y) / config.EYE_MAX_DEV_Y, -1.0, 1.0)
+            # Retrieve active bounds
+            left = config.EYE_LEFT_BOUND
+            right = config.EYE_RIGHT_BOUND
+            top = config.EYE_TOP_BOUND
+            bottom = config.EYE_BOTTOM_BOUND
+
+            # Check if calibrated (defaults are 0, 640, 0, 480)
+            is_calibrated = (left != 0 or right != 640)
+
+            if is_calibrated:
+                val_x = ratio_x * config.FRAME_WIDTH
+                val_y = ratio_y * config.FRAME_HEIGHT
+                
+                # Normalize using calibrated bounds
+                if right != left:
+                    norm_x = 2.0 * (val_x - left) / (right - left) - 1.0
+                else:
+                    norm_x = 0.0
+                    
+                if bottom != top:
+                    norm_y = 2.0 * (val_y - top) / (bottom - top) - 1.0
+                else:
+                    norm_y = 0.0
+                    
+                norm_x = np.clip(norm_x, -1.0, 1.0)
+                norm_y = np.clip(norm_y, -1.0, 1.0)
+            else:
+                # Fallback to default max deviation ranges
+                center_x = 0.5
+                center_y = 0.5 + config.VERTICAL_CENTER_OFFSET
+                norm_x = np.clip((ratio_x - center_x) / config.EYE_MAX_DEV_X, -1.0, 1.0)
+                norm_y = np.clip((ratio_y - center_y) / config.EYE_MAX_DEV_Y, -1.0, 1.0)
 
             # FIX 4: Non-linear power-scaling — was 1.5 (large dead zone),
             # now 1.1 (near-linear). Small eye movements near centre now
